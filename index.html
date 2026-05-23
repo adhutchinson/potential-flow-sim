@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Potential Flow Visualization</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a212b;
+    --panel-edge: #2a3645;
+    --ink: #e8edf2;
+    --ink-dim: #8a99ab;
+    --accent: #4dd0c0;
+    --source: #ff6b6b;
+    --vortex: #5b9dff;
+    --doublet: #6bd968;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Georgia', 'Times New Roman', serif;
+    overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    padding: 14px 22px 12px;
+    border-bottom: 1px solid var(--panel-edge);
+    display: flex; align-items: baseline; gap: 16px;
+    background: linear-gradient(180deg, #161d26, #12181f);
+  }
+  header h1 {
+    font-size: 19px; font-weight: normal; letter-spacing: 0.3px;
+  }
+  header h1 em { color: var(--accent); font-style: normal; }
+  header .sub {
+    font-size: 12px; color: var(--ink-dim);
+    font-family: 'Courier New', monospace;
+  }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+
+  #canvas-wrap { flex: 1; position: relative; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+  #hud {
+    position: absolute; left: 14px; bottom: 14px;
+    background: rgba(15,20,25,0.82);
+    border: 1px solid var(--panel-edge);
+    border-radius: 6px; padding: 9px 13px;
+    font-family: 'Courier New', monospace; font-size: 11.5px;
+    color: var(--ink-dim); line-height: 1.7;
+    backdrop-filter: blur(3px);
+  }
+  #hud b { color: var(--ink); font-weight: normal; }
+  #hud .k {
+    display: inline-block; background: var(--panel-edge);
+    color: var(--ink); border-radius: 3px;
+    padding: 0 5px; margin: 0 1px; font-size: 10.5px;
+  }
+
+  aside {
+    width: 270px; background: var(--panel);
+    border-left: 1px solid var(--panel-edge);
+    padding: 18px 18px 22px; overflow-y: auto;
+  }
+  .group { margin-bottom: 22px; }
+  .group h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--accent); font-weight: normal;
+    margin-bottom: 12px; padding-bottom: 5px;
+    border-bottom: 1px solid var(--panel-edge);
+    font-family: 'Courier New', monospace;
+  }
+  .field {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 9px; font-size: 13.5px;
+  }
+  .field label { color: var(--ink-dim); }
+  .field input[type=number] {
+    width: 74px; background: var(--bg); color: var(--ink);
+    border: 1px solid var(--panel-edge); border-radius: 4px;
+    padding: 5px 7px; font-family: 'Courier New', monospace; font-size: 13px;
+    text-align: right;
+  }
+  .field input[type=number]:focus { outline: 1px solid var(--accent); }
+  .field.swatch label::before {
+    content: ''; display: inline-block; width: 9px; height: 9px;
+    border-radius: 50%; margin-right: 7px; vertical-align: middle;
+  }
+  .field.s-src label::before { background: var(--source); }
+  .field.s-vtx label::before { background: var(--vortex); }
+  .field.s-dbl label::before { background: var(--doublet); }
+
+  .slider-row { margin-bottom: 14px; }
+  .slider-row .lbl {
+    display: flex; justify-content: space-between;
+    font-size: 13px; color: var(--ink-dim); margin-bottom: 6px;
+  }
+  .slider-row .lbl span:last-child {
+    color: var(--ink); font-family: 'Courier New', monospace;
+  }
+  input[type=range] {
+    width: 100%; -webkit-appearance: none; appearance: none;
+    height: 4px; background: var(--panel-edge); border-radius: 2px;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 15px; height: 15px; border-radius: 50%; border: none;
+    background: var(--accent); cursor: pointer;
+  }
+
+  .toggle {
+    display: flex; align-items: center; gap: 9px;
+    margin-bottom: 9px; font-size: 13.5px; cursor: pointer;
+    color: var(--ink-dim);
+  }
+  .toggle input { display: none; }
+  .toggle .box {
+    width: 17px; height: 17px; border-radius: 4px;
+    border: 1px solid var(--panel-edge); background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .toggle input:checked + .box {
+    background: var(--accent); border-color: var(--accent);
+  }
+  .toggle input:checked + .box::after {
+    content: '✓'; color: var(--bg); font-size: 12px; font-weight: bold;
+  }
+  .toggle input:checked ~ span { color: var(--ink); }
+
+  .seg { display: flex; gap: 6px; margin-bottom: 6px; }
+  .seg button {
+    flex: 1; background: var(--bg); color: var(--ink-dim);
+    border: 1px solid var(--panel-edge); border-radius: 4px;
+    padding: 7px 4px; font-size: 12px; cursor: pointer;
+    font-family: 'Courier New', monospace;
+  }
+  .seg button.on {
+    background: var(--accent); color: var(--bg); border-color: var(--accent);
+  }
+
+  #reset {
+    width: 100%; margin-top: 4px; background: transparent;
+    color: var(--source); border: 1px solid var(--source);
+    border-radius: 5px; padding: 9px; font-size: 13px; cursor: pointer;
+    font-family: 'Georgia', serif; letter-spacing: 0.3px;
+  }
+  #reset:hover { background: var(--source); color: var(--bg); }
+
+  .count {
+    font-family: 'Courier New', monospace; font-size: 11.5px;
+    color: var(--ink-dim); margin-top: 2px;
+  }
+  .count b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Potential Flow <em>·</em> Superposition Sandbox</h1>
+    <span class="sub">add elements · drag · watch the field respond</span>
+  </header>
+  <div id="main">
+    <div id="canvas-wrap">
+      <canvas id="cv"></canvas>
+      <div id="hud">
+        <b>Right-click</b> or <span class="k">A</span>-click: add element &nbsp;
+        <b>Left-drag</b>: move / pan &nbsp;
+        <b>Shift-click</b>: delete<br>
+        <b>Scroll</b>: zoom &nbsp;·&nbsp; element type set by the panel →
+      </div>
+    </div>
+    <aside>
+      <div class="group">
+        <h2>Add Element</h2>
+        <div class="seg" id="typeSeg">
+          <button data-t="source" class="on">Source</button>
+          <button data-t="vortex">Vortex</button>
+          <button data-t="doublet">Doublet</button>
+        </div>
+        <div class="count">in field: <b id="cnt">0</b> elements</div>
+      </div>
+
+      <div class="group">
+        <h2>Strengths</h2>
+        <div class="field"><label>Freestream U∞</label>
+          <input type="number" id="Uinf" value="1" step="0.5"></div>
+        <div class="field swatch s-src"><label>Source Q</label>
+          <input type="number" id="Qval" value="6" step="1"></div>
+        <div class="field swatch s-vtx"><label>Vortex Γ</label>
+          <input type="number" id="Gval" value="6" step="1"></div>
+        <div class="field swatch s-dbl"><label>Doublet μ</label>
+          <input type="number" id="Mval" value="6" step="1"></div>
+        <div class="count" style="margin-top:8px">
+          new elements use the strength above;<br>existing ones keep theirs.
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Streamlines</h2>
+        <div class="slider-row">
+          <div class="lbl"><span>Density</span><span id="densV">1.5</span></div>
+          <input type="range" id="dens" min="0.5" max="4" step="0.1" value="1.5">
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Display</h2>
+        <label class="toggle"><input type="checkbox" id="tArrows" checked>
+          <span class="box"></span><span>Direction arrows</span></label>
+        <label class="toggle"><input type="checkbox" id="tPressure">
+          <span class="box"></span><span>Pressure field (C<sub>p</sub>)</span></label>
+        <label class="toggle"><input type="checkbox" id="tGrid" checked>
+          <span class="box"></span><span>Reference grid</span></label>
+      </div>
+
+      <button id="reset">Reset Everything</button>
+    </aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   Potential flow sandbox.
+   Physics: superposition of uniform flow + sources / vortices /
+   doublets. Velocity field evaluated analytically; streamlines
+   traced by RK4 integration from an even seed grid.
+   ============================================================ */
+
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+// ---- world <-> screen mapping ------------------------------
+let view = { cx: 0, cy: 0, scale: 34 };   // scale = pixels per world unit
+let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+function resize() {
+  const r = cv.parentElement.getBoundingClientRect();
+  W = r.width; H = r.height;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  draw();
+}
+window.addEventListener('resize', resize);
+
+function toScreen(x, y) {
+  return [ W/2 + (x - view.cx) * view.scale,
+           H/2 - (y - view.cy) * view.scale ];
+}
+function toWorld(px, py) {
+  return [ view.cx + (px - W/2) / view.scale,
+           view.cy - (py - H/2) / view.scale ];
+}
+
+// ---- model -------------------------------------------------
+let elements = [];   // {x,y,strength,type}
+let params = { Uinf:1, Q:6, G:6, M:6, density:1.5 };
+let show   = { arrows:true, pressure:false, grid:true };
+let addType = 'source';
+
+// velocity at a world point
+function velocity(x, y) {
+  let u = params.Uinf, v = 0;
+  for (const e of elements) {
+    const dx = x - e.x, dy = y - e.y;
+    let r2 = dx*dx + dy*dy;
+    if (r2 < 1e-6) r2 = 1e-6;
+    const s = e.strength;
+    if (e.type === 'source') {
+      const k = s / (2*Math.PI*r2);
+      u += k*dx; v += k*dy;
+    } else if (e.type === 'vortex') {
+      const k = s / (2*Math.PI*r2);
+      u += -k*dy; v += k*dx;
+    } else { // doublet (sign convention: doublet + uniform flow -> cylinder)
+      const k = s / (2*Math.PI*r2*r2);
+      u += -k*(dx*dx - dy*dy);
+      v += -k*(2*dx*dy);
+    }
+  }
+  return [u, v];
+}
+
+// ---- pressure field (Cp) ----------------------------------
+function drawPressure() {
+  const step = 4;                       // screen px per cell
+  const img = ctx.createImageData(W, H);
+  const d = img.data;
+  const U = params.Uinf;
+  for (let py = 0; py < H; py += step) {
+    for (let px = 0; px < W; px += step) {
+      const [wx, wy] = toWorld(px, py);
+      const [u, v] = velocity(wx, wy);
+      const V2 = u*u + v*v;
+      let cp;
+      if (Math.abs(U) > 1e-4) {
+        cp = 1 - V2/(U*U);
+        cp = Math.max(-3, Math.min(1, cp));
+        cp = (cp + 3) / 4;              // -> 0..1
+      } else {
+        cp = Math.max(-10, -V2);
+        cp = (cp + 10) / 10;
+      }
+      const [cr, cg, cb] = parula(cp);
+      for (let dy = 0; dy < step && py+dy < H; dy++) {
+        for (let dx = 0; dx < step && px+dx < W; dx++) {
+          const i = ((py+dy)*W + (px+dx)) * 4;
+          d[i] = cr; d[i+1] = cg; d[i+2] = cb; d[i+3] = 235;
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+// compact parula-like colormap, t in 0..1
+function parula(t) {
+  t = Math.max(0, Math.min(1, t));
+  const stops = [
+    [ 53, 42,135],[ 16,100,213],[ 11,153,199],
+    [ 78,184,144],[208,186, 57],[249,251, 14]
+  ];
+  const f = t*(stops.length-1);
+  const i = Math.min(stops.length-2, Math.floor(f));
+  const a = f - i, A = stops[i], B = stops[i+1];
+  return [ A[0]+(B[0]-A[0])*a, A[1]+(B[1]-A[1])*a, A[2]+(B[2]-A[2])*a ];
+}
+
+// ---- reference grid ---------------------------------------
+function drawGrid() {
+  const [x0, y0] = toWorld(0, H);
+  const [x1, y1] = toWorld(W, 0);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath();
+  for (let x = Math.ceil(x0); x <= x1; x++) {
+    const [sx] = toScreen(x, 0);
+    ctx.moveTo(sx, 0); ctx.lineTo(sx, H);
+  }
+  for (let y = Math.ceil(y0); y <= y1; y++) {
+    const [, sy] = toScreen(0, y);
+    ctx.moveTo(0, sy); ctx.lineTo(W, sy);
+  }
+  ctx.stroke();
+  // axes
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+  ctx.beginPath();
+  const [ , ay] = toScreen(0, 0);
+  const [ ax ]  = toScreen(0, 0);
+  ctx.moveTo(0, ay); ctx.lineTo(W, ay);
+  ctx.moveTo(ax, 0); ctx.lineTo(ax, H);
+  ctx.stroke();
+}
+
+// ---- streamline tracing -----------------------------------
+// RK4 step on the (normalized) velocity field
+function rk4(x, y, h) {
+  function nrm(px, py) {
+    let [u, v] = velocity(px, py);
+    const m = Math.hypot(u, v) || 1e-9;
+    return [u/m, v/m];
+  }
+  const [k1x,k1y] = nrm(x, y);
+  const [k2x,k2y] = nrm(x + h*k1x/2, y + h*k1y/2);
+  const [k3x,k3y] = nrm(x + h*k2x/2, y + h*k2y/2);
+  const [k4x,k4y] = nrm(x + h*k3x,   y + h*k3y);
+  return [ x + h*(k1x+2*k2x+2*k3x+k4x)/6,
+           y + h*(k1y+2*k2y+2*k3y+k4y)/6 ];
+}
+
+function drawStreamlines() {
+  const [wx0, wy0] = toWorld(0, H);
+  const [wx1, wy1] = toWorld(W, 0);
+  const wW = wx1 - wx0, wH = wy1 - wy0;
+
+  // even seed grid; density slider controls spacing
+  const spacing = 1.4 / params.density;          // world units
+  const cols = Math.max(2, Math.round(wW / spacing));
+  const rows = Math.max(2, Math.round(wH / spacing));
+
+  // occupancy map keeps streamlines evenly separated
+  const cellsX = cols * 2, cellsY = rows * 2;
+  const occ = new Uint8Array(cellsX * cellsY);
+  const occIdx = (x, y) => {
+    const cx = Math.floor((x - wx0) / wW * cellsX);
+    const cy = Math.floor((y - wy0) / wH * cellsY);
+    if (cx < 0 || cy < 0 || cx >= cellsX || cy >= cellsY) return -1;
+    return cy * cellsX + cx;
+  };
+
+  const h = spacing * 0.28;
+  const maxSteps = 600;
+  const lines = [];
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const sx = wx0 + (c + 0.5) * wW / cols;
+      const sy = wy0 + (r + 0.5) * wH / rows;
+      const si = occIdx(sx, sy);
+      if (si < 0 || occ[si]) continue;
+
+      const pts = [[sx, sy]];
+      // integrate both directions
+      for (const dir of [1, -1]) {
+        let x = sx, y = sy;
+        for (let s = 0; s < maxSteps; s++) {
+          const [nx, ny] = rk4(x, y, h*dir);
+          if (nx < wx0-wW || nx > wx1+wW || ny < wy0-wH || ny > wy1+wH) break;
+          const [vu, vv] = velocity(nx, ny);
+          if (!isFinite(vu) || !isFinite(vv)) break;
+          const oi = occIdx(nx, ny);
+          if (oi >= 0 && occ[oi] && oi !== si) break;
+          x = nx; y = ny;
+          if (dir === 1) pts.push([x, y]); else pts.unshift([x, y]);
+        }
+      }
+      if (pts.length < 3) continue;
+      for (const [px, py] of pts) {
+        const oi = occIdx(px, py);
+        if (oi >= 0) occ[oi] = 1;
+      }
+      lines.push(pts);
+    }
+  }
+
+  // render
+  ctx.lineWidth = 1.15;
+  ctx.strokeStyle = show.pressure ? 'rgba(255,255,255,0.9)'
+                                  : 'rgba(120,224,210,0.85)';
+  for (const pts of lines) {
+    ctx.beginPath();
+    let [px, py] = toScreen(pts[0][0], pts[0][1]);
+    ctx.moveTo(px, py);
+    for (let i = 1; i < pts.length; i++) {
+      [px, py] = toScreen(pts[i][0], pts[i][1]);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  // direction arrows at line midpoints
+  if (show.arrows) {
+    ctx.fillStyle = show.pressure ? 'rgba(255,255,255,0.95)'
+                                  : 'rgba(120,224,210,0.95)';
+    for (const pts of lines) {
+      if (pts.length < 8) continue;
+      const m = Math.floor(pts.length/2);
+      const [ax, ay] = pts[m], [bx, by] = pts[m+1];
+      const [s0x, s0y] = toScreen(ax, ay);
+      const [s1x, s1y] = toScreen(bx, by);
+      const ang = Math.atan2(s1y - s0y, s1x - s0x);
+      const sz = 5;
+      ctx.save();
+      ctx.translate(s0x, s0y);
+      ctx.rotate(ang);
+      ctx.beginPath();
+      ctx.moveTo(sz, 0);
+      ctx.lineTo(-sz, sz*0.62);
+      ctx.lineTo(-sz, -sz*0.62);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+// ---- element markers --------------------------------------
+const COLORS = { source:'#ff6b6b', vortex:'#5b9dff', doublet:'#6bd968' };
+function drawElements() {
+  for (const e of elements) {
+    const [sx, sy] = toScreen(e.x, e.y);
+    ctx.beginPath();
+    ctx.arc(sx, sy, 7, 0, 2*Math.PI);
+    ctx.fillStyle = COLORS[e.type];
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#0f1419';
+    ctx.stroke();
+    // small glyph
+    ctx.fillStyle = '#0f1419';
+    ctx.font = 'bold 9px Courier New';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const g = e.type === 'source' ? '+' : e.type === 'vortex' ? '↻' : '∞';
+    ctx.fillText(g, sx, sy+0.5);
+  }
+}
+
+// ---- master draw ------------------------------------------
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0f1419';
+  ctx.fillRect(0, 0, W, H);
+  if (show.pressure) drawPressure();
+  if (show.grid)     drawGrid();
+  drawStreamlines();
+  drawElements();
+}
+
+// ---- interaction ------------------------------------------
+let drag = null;     // {idx} or {pan:true, ...}
+const HIT = 12;      // px
+
+function elementAt(px, py) {
+  for (let i = elements.length-1; i >= 0; i--) {
+    const [sx, sy] = toScreen(elements[i].x, elements[i].y);
+    if (Math.hypot(sx-px, sy-py) < HIT) return i;
+  }
+  return -1;
+}
+function strengthFor(type) {
+  return type === 'source' ? params.Q
+       : type === 'vortex' ? params.G : params.M;
+}
+function addElement(wx, wy) {
+  elements.push({ x:wx, y:wy, type:addType, strength:strengthFor(addType) });
+  updateCount();
+}
+
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+let keyA = false;
+window.addEventListener('keydown', e => { if (e.key==='a'||e.key==='A') keyA = true; });
+window.addEventListener('keyup',   e => { if (e.key==='a'||e.key==='A') keyA = false; });
+
+cv.addEventListener('mousedown', e => {
+  const px = e.offsetX, py = e.offsetY;
+  const idx = elementAt(px, py);
+
+  // delete: shift-click on an element
+  if (e.shiftKey && idx >= 0) {
+    elements.splice(idx, 1);
+    updateCount(); draw();
+    return;
+  }
+  // add: right-click, or A + left-click
+  if (e.button === 2 || (e.button === 0 && keyA)) {
+    const [wx, wy] = toWorld(px, py);
+    addElement(wx, wy);
+    draw();
+    return;
+  }
+  // left-click: drag element, else pan
+  if (e.button === 0) {
+    if (idx >= 0) {
+      drag = { idx };
+    } else {
+      drag = { pan:true, px, py, cx:view.cx, cy:view.cy };
+    }
+  }
+});
+
+cv.addEventListener('mousemove', e => {
+  const px = e.offsetX, py = e.offsetY;
+  if (!drag) {
+    cv.style.cursor = elementAt(px, py) >= 0 ? 'grab' : 'crosshair';
+    return;
+  }
+  if (drag.idx !== undefined) {
+    const [wx, wy] = toWorld(px, py);
+    elements[drag.idx].x = wx;
+    elements[drag.idx].y = wy;
+    cv.style.cursor = 'grabbing';
+  } else if (drag.pan) {
+    view.cx = drag.cx - (px - drag.px) / view.scale;
+    view.cy = drag.cy + (py - drag.py) / view.scale;
+    cv.style.cursor = 'move';
+  }
+  draw();
+});
+
+window.addEventListener('mouseup', () => { drag = null; });
+
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const px = e.offsetX, py = e.offsetY;
+  const [wx, wy] = toWorld(px, py);
+  const factor = e.deltaY < 0 ? 1.12 : 1/1.12;
+  view.scale *= factor;
+  view.scale = Math.max(6, Math.min(260, view.scale));
+  // keep cursor anchored
+  view.cx = wx - (px - W/2) / view.scale;
+  view.cy = wy + (py - H/2) / view.scale;
+  draw();
+}, { passive:false });
+
+// ---- panel wiring -----------------------------------------
+function bindNum(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    if (isFinite(v)) { params[key] = v; draw(); }
+  });
+}
+bindNum('Uinf','Uinf'); bindNum('Qval','Q');
+bindNum('Gval','G');    bindNum('Mval','M');
+
+const dens = document.getElementById('dens');
+dens.addEventListener('input', () => {
+  params.density = parseFloat(dens.value);
+  document.getElementById('densV').textContent = params.density.toFixed(1);
+  draw();
+});
+
+function bindToggle(id, key) {
+  document.getElementById(id).addEventListener('change', e => {
+    show[key] = e.target.checked; draw();
+  });
+}
+bindToggle('tArrows','arrows');
+bindToggle('tPressure','pressure');
+bindToggle('tGrid','grid');
+
+document.querySelectorAll('#typeSeg button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#typeSeg button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    addType = b.dataset.t;
+  });
+});
+
+document.getElementById('reset').addEventListener('click', () => {
+  elements = [];
+  view = { cx:0, cy:0, scale:34 };
+  updateCount(); draw();
+});
+
+function updateCount() {
+  document.getElementById('cnt').textContent = elements.length;
+}
+
+// ---- go ----------------------------------------------------
+resize();
+</script>
+</body>
+</html>
