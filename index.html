@@ -183,7 +183,8 @@
       <div id="hud">
         <b>Right-click</b> or <span class="k">A</span>-click: add element &nbsp;
         <b>Left-drag</b>: move / pan &nbsp;
-        <b>Shift-click</b>: delete<br>
+        <b>Ctrl-click</b>: delete<br>
+        <b>Shift-drag</b>: draw a vortex sheet &nbsp;·&nbsp;
         <b>Scroll</b>: zoom &nbsp;·&nbsp; element type set by the panel →
       </div>
     </div>
@@ -199,9 +200,15 @@
       </div>
 
       <div class="group">
-        <h2>Strengths</h2>
-        <div class="field"><label>Freestream U∞</label>
+        <h2>Freestream</h2>
+        <div class="field"><label>Speed U∞</label>
           <input type="number" id="Uinf" value="1" step="0.5"></div>
+        <div class="field"><label>Angle α (deg)</label>
+          <input type="number" id="Ainf" value="0" step="5"></div>
+      </div>
+
+      <div class="group">
+        <h2>Strengths</h2>
         <div class="field swatch s-src"><label>Source Q</label>
           <input type="number" id="Qval" value="6" step="1"></div>
         <div class="field swatch s-vtx"><label>Vortex Γ</label>
@@ -210,6 +217,17 @@
           <input type="number" id="Mval" value="6" step="1"></div>
         <div class="count" style="margin-top:8px">
           new elements use the strength above;<br>existing ones keep theirs.
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Vortex Sheet</h2>
+        <div class="field"><label>Vortex spacing</label>
+          <input type="number" id="SheetGap" value="0.4" step="0.1"></div>
+        <div class="count" style="margin-top:2px">
+          <b>Shift-drag</b> on the field to draw a sheet.<br>
+          On release it fills with vortices spaced<br>
+          this far apart, each of strength Γ.
         </div>
       </div>
 
@@ -256,6 +274,14 @@
    Physics: superposition of uniform flow + sources / vortices /
    doublets. Velocity field evaluated analytically; streamlines
    traced by RK4 integration from an even seed grid.
+
+   The uniform freestream can be inclined at an angle alpha,
+   so its components are (U cos a, U sin a).
+
+   A "vortex sheet" can be sketched with shift-drag: the drawn
+   polyline is resampled at a uniform arc-length spacing and a
+   vortex of strength Gamma is placed at each sample, giving a
+   discrete approximation of a continuous vortex sheet.
    ============================================================ */
 
 const cv  = document.getElementById('cv');
@@ -285,14 +311,18 @@ function toWorld(px, py) {
 
 // ---- model -------------------------------------------------
 let elements = [];   // {x,y,strength,type}
-let params = { Uinf:1, Q:6, G:6, M:6, density:1.5 };
+// alpha is the freestream inclination in degrees (measured CCW from +x)
+let params = { Uinf:1, alpha:0, Q:6, G:6, M:6, density:1.5, sheetGap:0.4 };
 let show   = { arrows:true, grid:true, even:false,
                field:'none', particles:false, stagnation:false };
 let addType = 'source';
 
 // velocity at a world point
 function velocity(x, y) {
-  let u = params.Uinf, v = 0;
+  // uniform freestream, inclined by alpha (degrees)
+  const a = params.alpha * Math.PI / 180;
+  let u = params.Uinf * Math.cos(a);
+  let v = params.Uinf * Math.sin(a);
   for (const e of elements) {
     const dx = x - e.x, dy = y - e.y;
     let r2 = dx*dx + dy*dy;
@@ -318,6 +348,7 @@ function drawField() {
   const step = 4;                       // screen px per cell
   const img = ctx.createImageData(W, H);
   const d = img.data;
+  // freestream speed magnitude (independent of inclination angle)
   const U = params.Uinf;
 
   // for velocity mode we need a reference max speed to normalize colors;
@@ -343,6 +374,7 @@ function drawField() {
       let t;
       if (show.field === 'pressure') {
         if (Math.abs(U) > 1e-4) {
+          // Cp = 1 - V^2 / U_inf^2  (U_inf is the freestream magnitude)
           let cp = 1 - V2/(U*U);
           cp = Math.max(-3, Math.min(1, cp));
           t = (cp + 3) / 4;
@@ -625,6 +657,82 @@ function drawElements() {
   }
 }
 
+// ---- vortex sheet drawing ---------------------------------
+// While shift-dragging, sheetDraw holds the raw polyline (world coords)
+// being sketched. On release the polyline is resampled at a uniform
+// arc-length spacing and a vortex is dropped at each sample point.
+let sheetDraw = null;   // {pts:[[x,y],...]} while drawing, else null
+
+// resample a polyline at uniform arc-length 'gap', returning sample points
+function resamplePolyline(pts, gap) {
+  if (pts.length < 2 || gap <= 0) return pts.slice();
+  const out = [pts[0].slice()];
+  let acc = 0;                       // distance accumulated since last sample
+  for (let i = 1; i < pts.length; i++) {
+    let ax = pts[i-1][0], ay = pts[i-1][1];
+    const bx = pts[i][0], by = pts[i][1];
+    let segLen = Math.hypot(bx-ax, by-ay);
+    while (acc + segLen >= gap) {
+      const t = (gap - acc) / segLen;
+      const nx = ax + (bx-ax)*t;
+      const ny = ay + (by-ay)*t;
+      out.push([nx, ny]);
+      ax = nx; ay = ny;
+      segLen = Math.hypot(bx-ax, by-ay);
+      acc = 0;
+    }
+    acc += segLen;
+  }
+  return out;
+}
+
+// turn the sketched polyline into a row of uniformly spaced vortices
+function commitVortexSheet() {
+  if (!sheetDraw || sheetDraw.pts.length < 2) { sheetDraw = null; return; }
+  const gap = params.sheetGap > 1e-4 ? params.sheetGap : 0.4;
+  const samples = resamplePolyline(sheetDraw.pts, gap);
+  for (const [x, y] of samples) {
+    elements.push({ x, y, type:'vortex', strength:params.G });
+  }
+  sheetDraw = null;
+  updateCount();
+  fieldChanged();
+}
+
+// draw the in-progress sheet polyline plus preview dots at sample spots
+function drawSheetDraw() {
+  if (!sheetDraw || sheetDraw.pts.length < 1) return;
+  const pts = sheetDraw.pts;
+  // the red line being sketched
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#ff5555';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  let [px, py] = toScreen(pts[0][0], pts[0][1]);
+  ctx.moveTo(px, py);
+  for (let i = 1; i < pts.length; i++) {
+    [px, py] = toScreen(pts[i][0], pts[i][1]);
+    ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  // preview the vortices that would be placed
+  if (pts.length >= 2) {
+    const gap = params.sheetGap > 1e-4 ? params.sheetGap : 0.4;
+    const samples = resamplePolyline(pts, gap);
+    ctx.fillStyle = 'rgba(91,157,255,0.85)';
+    ctx.strokeStyle = '#ff5555';
+    ctx.lineWidth = 1;
+    for (const [x, y] of samples) {
+      const [sx, sy] = toScreen(x, y);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 4, 0, 2*Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+}
+
 // ---- particle system --------------------------------------
 // Particles advect along the velocity field. Speed is capped so
 // singularities can't fling them off; particles that leave the
@@ -813,6 +921,7 @@ function draw() {
   if (show.particles) drawParticles();
   if (show.stagnation) drawStagnation();
   drawElements();
+  drawSheetDraw();          // in-progress vortex sheet, if any
 }
 
 // Call after anything that changes the velocity field or the view.
@@ -824,7 +933,7 @@ function fieldChanged() {
 }
 
 // ---- interaction ------------------------------------------
-let drag = null;     // {idx} or {pan:true, ...}
+let drag = null;     // {idx} or {pan:true,...} or {sheet:true}
 const HIT = 12;      // px
 
 function elementAt(px, py) {
@@ -853,8 +962,16 @@ cv.addEventListener('mousedown', e => {
   const px = e.offsetX, py = e.offsetY;
   const idx = elementAt(px, py);
 
-  // delete: shift-click on an element
-  if (e.shiftKey && idx >= 0) {
+  // draw a vortex sheet: shift + left-drag
+  if (e.button === 0 && e.shiftKey) {
+    const [wx, wy] = toWorld(px, py);
+    sheetDraw = { pts: [[wx, wy]] };
+    drag = { sheet:true };
+    cv.style.cursor = 'crosshair';
+    return;
+  }
+  // delete: ctrl/cmd-click on an element
+  if ((e.ctrlKey || e.metaKey) && idx >= 0) {
     elements.splice(idx, 1);
     updateCount(); fieldChanged();
     return;
@@ -879,7 +996,8 @@ cv.addEventListener('mousedown', e => {
 cv.addEventListener('mousemove', e => {
   const px = e.offsetX, py = e.offsetY;
   if (!drag) {
-    cv.style.cursor = elementAt(px, py) >= 0 ? 'grab' : 'crosshair';
+    cv.style.cursor = e.shiftKey ? 'crosshair'
+                    : (elementAt(px, py) >= 0 ? 'grab' : 'crosshair');
     // hover a stagnation point -> show its coordinates
     const tip = document.getElementById('stagTip');
     let onStag = null;
@@ -900,20 +1018,37 @@ cv.addEventListener('mousemove', e => {
     return;
   }
   document.getElementById('stagTip').style.display = 'none';
-  if (drag.idx !== undefined) {
+  if (drag.sheet) {
+    // extend the sketched polyline; only record points that moved enough
+    const [wx, wy] = toWorld(px, py);
+    const last = sheetDraw.pts[sheetDraw.pts.length-1];
+    const minStep = 3 / view.scale;          // ~3 screen px in world units
+    if (Math.hypot(wx-last[0], wy-last[1]) >= minStep) {
+      sheetDraw.pts.push([wx, wy]);
+    }
+    cv.style.cursor = 'crosshair';
+    draw();
+  } else if (drag.idx !== undefined) {
     const [wx, wy] = toWorld(px, py);
     elements[drag.idx].x = wx;
     elements[drag.idx].y = wy;
     cv.style.cursor = 'grabbing';
+    fieldChanged();
   } else if (drag.pan) {
     view.cx = drag.cx - (px - drag.px) / view.scale;
     view.cy = drag.cy + (py - drag.py) / view.scale;
     cv.style.cursor = 'move';
+    fieldChanged();
   }
-  fieldChanged();
 });
 
-window.addEventListener('mouseup', () => { drag = null; });
+window.addEventListener('mouseup', () => {
+  // finishing a vortex-sheet drag commits the sheet
+  if (drag && drag.sheet) {
+    commitVortexSheet();
+  }
+  drag = null;
+});
 
 cv.addEventListener('wheel', e => {
   e.preventDefault();
@@ -936,8 +1071,9 @@ function bindNum(id, key) {
     if (isFinite(v)) { params[key] = v; fieldChanged(); }
   });
 }
-bindNum('Uinf','Uinf'); bindNum('Qval','Q');
-bindNum('Gval','G');    bindNum('Mval','M');
+bindNum('Uinf','Uinf'); bindNum('Ainf','alpha');
+bindNum('Qval','Q');    bindNum('Gval','G');
+bindNum('Mval','M');    bindNum('SheetGap','sheetGap');
 
 const dens = document.getElementById('dens');
 dens.addEventListener('input', () => {
@@ -988,6 +1124,7 @@ document.querySelectorAll('#typeSeg button').forEach(b => {
 
 document.getElementById('reset').addEventListener('click', () => {
   elements = [];
+  sheetDraw = null;
   view = { cx:0, cy:0, scale:34 };
   if (show.particles) seedParticles();
   updateCount(); fieldChanged();
