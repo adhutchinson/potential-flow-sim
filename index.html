@@ -303,7 +303,7 @@ function velocity(x, y) {
       u += k*dx; v += k*dy;
     } else if (e.type === 'vortex') {
       const k = s / (2*Math.PI*r2);
-      u += -k*dy; v += k*dx;
+      u += k*dy; v += -k*dx;
     } else { // doublet (sign convention: doublet + uniform flow -> cylinder)
       const k = s / (2*Math.PI*r2*r2);
       u += -k*(dx*dx - dy*dy);
